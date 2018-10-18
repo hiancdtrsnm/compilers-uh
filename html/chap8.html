@@ -337,7 +337,7 @@ ID      := [a-zA-Z_][a-zA-Z0-9]*</code></pre>
 <pre class="grammar"><code>&lt;class&gt;  := class ID [(&lt;params&gt;)] [is ID [(&lt;args&gt;)]] { [&lt;attr&gt; ;]* [&lt;method&gt;]* }
 &lt;params&gt; := ID [: ID] [, ID [: ID]]*
           | epsilon
-&lt;args&gt;   := ID = &lt;expr&gt; [, ID = &lt;expr&gt;]*
+&lt;args&gt;   := &lt;expr&gt; [, &lt;expr&gt;]*
           | epsilon</code></pre>
 <p>Los atributos tiene un nombre, opcionalmente un tipo y una inicialización obligatoria.</p>
 <pre class="grammar"><code>&lt;attr&gt; := ID [: ID] = &lt;expr&gt;</code></pre>
@@ -347,12 +347,14 @@ ID      := [a-zA-Z_][a-zA-Z0-9]*</code></pre>
           | { [&lt;expr&gt; ;]+ }</code></pre>
 <p>Una función global tiene una signatura muy parecida a un método, pero requiere la palabra clave <code>function</code>:</p>
 <pre class="grammar"><code>&lt;function&gt; := function ID ( &lt;params&gt; ) [: ID] &lt;body&gt;</code></pre>
-<p>Finalmente las expresiones se dividen en 7 tipos fundamentales:</p>
+<p>Finalmente las expresiones se dividen en 8 tipos fundamentales:</p>
 <pre class="grammar"><code>&lt;expr&gt; := &lt;let-expr&gt;
         | &lt;if-expr&gt;
         | &lt;while-expr&gt;
         | &lt;case-expr&gt;
         | &lt;assign-expr&gt;
+        | &lt;array-expr&gt;
+        | &lt;inst-expr&gt;
         | &lt;elem-expr&gt;</code></pre>
 <p>Una expresión de tipo <code>let</code> se compone de un bloque de inicializaciones, y un cuerpo. Igual que las funciones, este cuerpo puede ser simple o compuesto por una lista de expresiones:</p>
 <pre class="grammar"><code>&lt;let-expr&gt;  := let &lt;decls&gt; in &lt;expr-body&gt;
@@ -374,8 +376,12 @@ ID      := [a-zA-Z_][a-zA-Z0-9]*</code></pre>
 <p>Una asignación tiene una locación a la izquierda y una expresión a la derecha:</p>
 <pre class="grammar"><code>&lt;assing-expr&gt; := &lt;loc&gt; &#39;:=&#39; &lt;expr&gt;
 &lt;loc&gt;         := &lt;loc&gt; &#39;[&#39; &lt;expr&gt; &#39;]&#39;
-               | &lt;loc&gt; . &lt;expr&gt;
+               | &lt;loc&gt; . &lt;loc&gt;
                | ID</code></pre>
+<p>Una expresión de creación de <em>array</em> tiene un tipo opcional, una cantidad, y opcionalmente una cláusula de inicialización:</p>
+<pre class="grammar"><code>&lt;array-expr&gt; := new ID? &#39;[&#39; &lt;expr&gt; &#39;]&#39; [{ ID -&gt; &lt;expr&gt; }]?</code></pre>
+<p>Una expresión de instanciación tiene un tipo y un conjunto de argumentos de clase:</p>
+<pre class="grammar"><code>&lt;inst-expr&gt; := new ID ( &lt;args&gt; )</code></pre>
 <p>Las expresiones elementales se componen de todas las operaciones lógicas, aritméticas, etc., además de la invocación a funciones globales, métodos, y atributos:</p>
 <pre class="grammar"><code>&lt;elem-expr&gt; := &lt;expr&gt; == &lt;expr&gt; | &lt;expr&gt; != &lt;expr&gt;
              | &lt;expr&gt; &lt; &lt;expr&gt;  | &lt;expr&gt; &gt; &lt;expr&gt;
@@ -387,12 +393,32 @@ ID      := [a-zA-Z_][a-zA-Z0-9]*</code></pre>
              | &lt;expr&gt; [ &#39;[&#39; &lt;expr&gt; &#39;]&#39; ]?
              | [&lt;expr&gt; .] ID [( &lt;args&gt; )]?
              | -&lt;expr&gt; | ( &lt;expr&gt; )</code></pre>
+<p><strong>NOTA</strong>: Como se ha explicado al inicio de la sección, la gramática anterior no tiene en cuenta la asociatividad ni precedencia de los diferentes tipos de expresiones. Esto se ha hecho a propósito, para permitir a los estudiantes resolver los problemas de ambigüedad resultantes del modo que consideren oportuno.</p>
 <h3 id="semántica-de-tipos">Semántica de tipos</h3>
+<p>En <strong>HULK</strong> todas las expresiones tienen asociado un tipo estático, que debe ser inferido por el compilador. Cada expresión o instrucción de <strong>HULK</strong> tiene reglas de consistencia de tipos que deben ser verificadas por el compilador. En esta sección asumiremos que todos los tipos están explícitamente declarados. La sección siguiente explica cómo realizar la inferencia de tipos cuando existan declaraciones sin anotaciones de tipo. Para definir el tipo inferido y las restricciones de consistencia de cada tipo de expresión usaremos la notación definida en el capítulo <a href="#semantics">Semántica de Tipos</a>.</p>
 <h3 id="reglas-para-la-inferencia-de-tipos">Reglas para la inferencia de tipos</h3>
 <h3 id="semántica-operacional">Semántica operacional</h3>
 <h2 id="implementando-un-compilador-de-hulk">Implementando un Compilador de <strong>HULK</strong></h2>
 <p>La implementación de un compilador de <strong>HULK</strong> tiene varios detalles y retos interesantes. A continuación queremos discutir algunas cuestiones que facilitarán esta tarea.</p>
+<h3 id="consideraciones-generales">Consideraciones generales</h3>
+<p>El compilador de <strong>HULK</strong> es un proyecto complejo, que debe ser dividido convenientemente en subproblemas, para ser atacado de forma efectiva. Si el proyecto se realiza en un equipo, existen algunos puntos importantes donde la carga puede ser divida.</p>
+<p>El punto de división más evidente es el AST semántico, que separa todo el proceso de <em>parsing</em> de las fases de verificación semántica y generación de código. Si se define primero una jerarquía para el AST y se usa el patrón <em>Visitor</em>, es posible dividir el trabajo al menos en 2 fases independientes: <em>parsing</em> y chequeo semántico. Mientras un miembro del equipo construye la gramática y el <em>parser</em>, otro miembro puede implementar toda la verificación semántica, sin estorbarse mutuamente, pues la interfaz de comunicación es el AST. Así mismo, un tercer miembro puede a partir del AST semántico implementar toda la generación de código, asumiendo que la verificación semántica es correcta, sin importar que aún no esté implementada.</p>
+<p>Para la fase de generación de código, recomendamos que se utilice un lenguaje intermedio, similar a <strong>CIL</strong>. Esto permitirá nuevamente dividir el trabajo en 2 fases bien separadas. Primero se define un AST de este lenguaje intermedio, que debe ser mucho más sencillo que un AST para <strong>HULK</strong>. A partir de este punto, 2 personas diferentes pueden trabajar en 2 tareas: la transformación del AST semántico al AST de <strong>CIL</strong>, y la transformación de este AST a MIPS.</p>
+<p>De modo que existen al menos 4 tareas del compilador que pueden implementarse en paralelo, estableciendo como interfaces de comunicación 2 ASTs, 1 para <strong>HULK</strong> y uno para <strong>CIL</strong>. Las tareas opcionales de inferencia de tipos y optimización de código también ser incluidas en este esquema de forma no disruptiva. Esto queda resumido en la siguiente gráfica:</p>
+<p><img src="../graphics/image-chap8-1.svg" id="image-chap8-1" style="width:100.0%" /><br />
+</p>
 <h3 id="flujo-de-trabajo">Flujo de trabajo</h3>
+<p>El lenguaje <strong>HULK</strong> ha sido diseñado de forma que su compilador pueda implementarse <em>bottom-up</em>. Esto es, en vez de implementar cada fase del compilador (<em>lexer</em>, <em>parser</em>, semántico, generación de código) de forma secuencial, proponemos que se tomen las características del lenguaje (expresiones, funciones, clases) y se vayan adicionando, en cada momento implementando las modificaciones que cada fase requiera. A continuación proponemos un orden para implementar las características del lenguaje. En cada paso, sugerimos implementar <em>todas</em> las fases, es decir, introducir los tipos de <em>token</em> nuevos, producciones en la gramática, nodos del AST, reglas de verificación semántica y generación de código.</p>
+<h4 id="expresiones-aritméticas">Expresiones Aritméticas</h4>
+<p>Implementar los operadores <code>+</code>, <code>-</code>, <code>*</code>, <code>/</code> y <code>%</code>, y el tipo <code>Number</code>. En este punto su compilador debe ser capaz de compilar programas como el siguiente:</p>
+<pre class="hulk"><code>(34.1 * (123.42 - 208)) / (24 + 9)</code></pre>
+<p>Para resolver este subproblema deberá:</p>
+<ul>
+<li>Implementar un tokenizador básico de expresiones aritméticas.</li>
+<li>Diseñar una gramática no-ambigüa de expresiones.</li>
+<li>Construir un AST correspondiente.</li>
+<li>Construir un visitor para generar código de 3</li>
+</ul>
 <h3 id="casos-de-prueba">Casos de prueba</h3>
 <nav>
     <a href="chap7.html" class="navigation previous">Anterior</a>
